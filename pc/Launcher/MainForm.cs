@@ -34,6 +34,10 @@ namespace CrmpLauncher
         private readonly Timer _timer = new Timer { Interval = 15000 };
         private bool _busy;
 
+        private enum CacheState { Unknown, NoGame, NeedInstall, NeedUpdate, Ready }
+        private CacheState _cache = CacheState.Unknown;
+        private string _remoteVersion;
+
         public MainForm()
         {
             Text = Config.LauncherTitle;
@@ -54,7 +58,7 @@ namespace CrmpLauncher
             _chkClose.Checked = _settings.CloseAfterLaunch;
 
             _timer.Tick += (s, e) => RefreshOnline();
-            Shown += (s, e) => { RefreshOnline(); _timer.Start(); };
+            Shown += async (s, e) => { RefreshOnline(); _timer.Start(); await CheckCacheAsync(); };
             FormClosing += (s, e) => SaveSettings();
         }
 
@@ -116,7 +120,7 @@ namespace CrmpLauncher
 
             // статус + прогресс
             var status = MakeCard(16, 382, 448, 62);
-            Setup(_lblStatus, "Кэш: не проверен", new Font("Segoe UI", 9.5f), TextDim, new Rectangle(12, 8, 424, 20));
+            Setup(_lblStatus, "Проверка кэша…", new Font("Segoe UI", 9.5f), TextDim, new Rectangle(12, 8, 424, 20));
             _progress.Bounds = new Rectangle(12, 34, 424, 16);
             _progress.Maximum = 100;
             status.Controls.AddRange(new Control[] { _lblStatus, _progress });
@@ -131,7 +135,7 @@ namespace CrmpLauncher
             _btnPlay.Bounds = new Rectangle(16, 482, 300, 60);
             StyleButton(_btnPlay, Accent);
             _btnPlay.FlatAppearance.BorderSize = 0;
-            _btnPlay.Click += async (s, e) => await PlayAsync();
+            _btnPlay.Click += async (s, e) => await MainButtonAsync();
             Controls.Add(_btnPlay);
 
             _btnCache.Text = "Переустановить\nкэш";
@@ -228,7 +232,76 @@ namespace CrmpLauncher
                 }
                 _txtPath.Text = dlg.SelectedPath;
                 SaveSettings();
+                _ = CheckCacheAsync();
             }
+        }
+
+        /// <summary>Проверяем, установлен ли кэш, и меняем большую кнопку.</summary>
+        private async Task CheckCacheAsync()
+        {
+            string dir = _txtPath.Text.Trim();
+            if (!GameLauncher.IsGameDir(dir))
+            {
+                SetCacheState(CacheState.NoGame, "Укажи папку GTA San Andreas, чтобы установить кэш");
+                return;
+            }
+
+            _lblStatus.Text = "Проверка кэша…";
+            try
+            {
+                _remoteVersion = await CacheManager.FetchRemoteVersionAsync();
+            }
+            catch
+            {
+                // нет интернета: если кэш уже стоит — пускаем играть
+                if (CacheManager.GetInstalledVersion(dir) != null)
+                    SetCacheState(CacheState.Ready, "Не удалось проверить обновления кэша (нет интернета)");
+                else
+                    SetCacheState(CacheState.NeedInstall, "Нет интернета — кэш не установить");
+                return;
+            }
+
+            string installed = CacheManager.GetInstalledVersion(dir);
+            if (_remoteVersion == null)
+                SetCacheState(CacheState.Ready, "Кэш не требуется");
+            else if (installed == null)
+                SetCacheState(CacheState.NeedInstall, "Кэш не установлен — нажми «Установить кэш»");
+            else if (installed != _remoteVersion)
+                SetCacheState(CacheState.NeedUpdate, $"Доступно обновление кэша: {installed} → {_remoteVersion}");
+            else
+                SetCacheState(CacheState.Ready, "Кэш установлен (версия " + installed + ")");
+        }
+
+        private void SetCacheState(CacheState state, string text)
+        {
+            _cache = state;
+            _lblStatus.Text = text;
+            _progress.Value = state == CacheState.Ready ? 100 : 0;
+            UpdateMainButton();
+        }
+
+        private void UpdateMainButton()
+        {
+            if (_busy) { _btnPlay.Text = "ЗАГРУЗКА…"; return; }
+            switch (_cache)
+            {
+                case CacheState.NeedInstall: _btnPlay.Text = "УСТАНОВИТЬ КЭШ"; break;
+                case CacheState.NeedUpdate: _btnPlay.Text = "ОБНОВИТЬ КЭШ"; break;
+                default: _btnPlay.Text = "ИГРАТЬ"; break;
+            }
+        }
+
+        private async Task MainButtonAsync()
+        {
+            if (_busy) return;
+            if (_cache == CacheState.NeedInstall || _cache == CacheState.NeedUpdate)
+            {
+                string dir = _txtPath.Text.Trim();
+                if (await RunCacheAsync(dir, false))
+                    await CheckCacheAsync();
+                return;
+            }
+            await PlayAsync();
         }
 
         private async Task PlayAsync()
@@ -257,7 +330,13 @@ namespace CrmpLauncher
             }
             SaveSettings();
 
-            if (!await RunCacheAsync(dir, false)) return;
+            // кэш обязателен: перепроверяем перед запуском
+            await CheckCacheAsync();
+            if (_cache == CacheState.NeedInstall || _cache == CacheState.NeedUpdate)
+            {
+                Error("Сначала установи кэш — нажми «" + _btnPlay.Text + "».");
+                return;
+            }
 
             try
             {
@@ -279,7 +358,8 @@ namespace CrmpLauncher
                 Error("Сначала укажи папку GTA San Andreas.");
                 return;
             }
-            await RunCacheAsync(dir, true);
+            if (await RunCacheAsync(dir, true))
+                await CheckCacheAsync();
         }
 
         /// <returns>false — если была ошибка и запускать игру не надо.</returns>
@@ -292,8 +372,6 @@ namespace CrmpLauncher
                     s => BeginInvoke((Action)(() => _lblStatus.Text = s)),
                     p => BeginInvoke((Action)(() => _progress.Value = Math.Max(0, Math.Min(100, p)))));
                 var result = await cm.UpdateAsync(force);
-                if (result == CacheManager.Result.NotPublished)
-                    _lblStatus.Text = "Кэш на GitHub не опубликован — пропускаю";
                 return true;
             }
             catch (UnauthorizedAccessException)
@@ -318,7 +396,7 @@ namespace CrmpLauncher
             _busy = busy;
             _btnPlay.Enabled = !busy;
             _btnCache.Enabled = !busy;
-            _btnPlay.Text = busy ? "ЗАГРУЗКА…" : "ИГРАТЬ";
+            UpdateMainButton();
         }
 
         private void SaveSettings()

@@ -41,17 +41,33 @@ namespace CrmpLauncher
         public string InstalledVersion =>
             File.Exists(VersionFile) ? File.ReadAllText(VersionFile).Trim() : null;
 
+        /// <summary>Версия кэша на GitHub; null — кэш не опубликован.</summary>
+        public static async Task<string> FetchRemoteVersionAsync()
+        {
+            using (var resp = await Http.GetAsync(Config.CacheVersionUrl))
+            {
+                if (resp.StatusCode == HttpStatusCode.NotFound) return null;
+                resp.EnsureSuccessStatusCode();
+                string v = (await resp.Content.ReadAsStringAsync()).Trim();
+                return v.Length == 0 ? null : v;
+            }
+        }
+
+        public static string GetInstalledVersion(string gameDir)
+        {
+            try
+            {
+                string f = Path.Combine(gameDir, Config.LocalCacheVersionFile);
+                return File.Exists(f) ? File.ReadAllText(f).Trim() : null;
+            }
+            catch { return null; }
+        }
+
         public async Task<Result> UpdateAsync(bool force)
         {
             _status("Проверка кэша…");
-            string remote;
-            using (var resp = await Http.GetAsync(Config.CacheVersionUrl))
-            {
-                if (resp.StatusCode == HttpStatusCode.NotFound) return Result.NotPublished;
-                resp.EnsureSuccessStatusCode();
-                remote = (await resp.Content.ReadAsStringAsync()).Trim();
-            }
-            if (remote.Length == 0) return Result.NotPublished;
+            string remote = await FetchRemoteVersionAsync();
+            if (remote == null) return Result.NotPublished;
 
             if (!force && remote == InstalledVersion)
             {
