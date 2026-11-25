@@ -1,0 +1,44 @@
+name: Build PC launcher
+
+on:
+  push:
+    paths:
+      - 'pc/**'
+      - '.github/workflows/build-pc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build Launcher.exe
+        run: dotnet build pc/Launcher/Launcher.csproj -c Release
+
+      - name: Collect
+        run: cp pc/Launcher/bin/Release/net48/Launcher.exe Launcher.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Launcher-pc
+          path: Launcher.exe
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: launcher-pc
+          name: CRMP Launcher для ПК (последняя сборка)
+          body: |
+            Автосборка из коммита ${{ github.sha }}.
+            Скачай Launcher.exe и положи куда угодно (например, на рабочий стол).
+            Нужны: GTA San Andreas (1.0 US) + SA-MP 0.3.7, Windows 7 SP1 / 8 / 10 / 11 (.NET Framework 4.8).
+          files: Launcher.exe
+          make_latest: false

@@ -4,6 +4,10 @@ on:
   push:
     paths-ignore:
       - 'cache/**'
+      - 'pc/**'
+      - 'cache-pc/**'
+      - '.github/workflows/build-pc.yml'
+      - '.github/workflows/publish-cache.yml'
       - '**.md'
   workflow_dispatch:
 

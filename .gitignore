@@ -7,3 +7,5 @@ local.properties
 *.apk
 *.keystore
 *.jks
+pc/Launcher/bin/
+pc/Launcher/obj/
