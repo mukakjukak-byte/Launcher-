@@ -104,20 +104,36 @@ namespace CrmpLauncher
             }
         }
 
+        private const string UserPrefix = "UserFiles/";
+
         private void Extract(string zipPath, string dest)
         {
             string root = Path.GetFullPath(dest).TrimEnd('\\') + "\\";
+            // Файлы из UserFiles/ идут в "Документы\GTA San Andreas User Files" (там sa-mp.cfg и настройки игры)
+            string userRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GTA San Andreas User Files");
+            string userRootFull = Path.GetFullPath(userRoot).TrimEnd('\\') + "\\";
             using (var zip = ZipFile.OpenRead(zipPath))
             {
                 int i = 0, count = Math.Max(zip.Entries.Count, 1), last = -1;
                 foreach (var entry in zip.Entries)
                 {
                     i++;
-                    string full = Path.GetFullPath(Path.Combine(dest, entry.FullName));
-                    if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                    string name = entry.FullName.Replace('\\', '/');
+                    string baseDir = dest, baseFull = root;
+                    if (name.StartsWith(UserPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        name = name.Substring(UserPrefix.Length);
+                        baseDir = userRoot;
+                        baseFull = userRootFull;
+                    }
+                    if (name.Length == 0) continue;
+
+                    string full = Path.GetFullPath(Path.Combine(baseDir, name));
+                    if (!full.StartsWith(baseFull, StringComparison.OrdinalIgnoreCase))
                         throw new IOException("Плохой путь в архиве: " + entry.FullName);
 
-                    if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
+                    if (name.EndsWith("/"))
                     {
                         Directory.CreateDirectory(full);
                     }
