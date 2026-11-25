@@ -1,0 +1,56 @@
+name: Publish cache
+
+# Запуск вручную: Actions -> Publish cache -> Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      cache_url:
+        description: 'Прямая ссылка на zip с кэшем (если кэш больше 100 МБ и не лежит в папке cache/). Можно оставить пустым.'
+        required: false
+        default: ''
+      version:
+        description: 'Версия кэша (если пусто — номер запуска). Лаунчер перекачает кэш, когда версия сменится.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build cache.zip
+        env:
+          CACHE_URL: ${{ inputs.cache_url }}
+        run: |
+          set -e
+          if [ -n "$CACHE_URL" ]; then
+            curl -fL --retry 3 -o cache.zip "$CACHE_URL"
+            unzip -tq cache.zip
+          else
+            cd cache
+            if [ -z "$(find . -type f ! -name 'README.md' ! -name '.gitkeep' | head -1)" ]; then
+              echo "::error::Папка cache/ пустая. Положи туда файлы кэша или укажи cache_url."
+              exit 1
+            fi
+            zip -r -9 ../cache.zip . -x 'README.md' -x '.gitkeep'
+            cd ..
+          fi
+          VERSION="${{ inputs.version }}"
+          [ -z "$VERSION" ] && VERSION="${{ github.run_number }}"
+          echo -n "$VERSION" > version.txt
+          ls -lh cache.zip version.txt
+
+      - name: Publish to release "cache"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cache
+          name: Кэш игры
+          body: Кэш для CRMP Launcher. Обновляется workflow «Publish cache».
+          files: |
+            cache.zip
+            version.txt
+          make_latest: false
