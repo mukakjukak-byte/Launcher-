@@ -1,0 +1,110 @@
+name: Build game
+
+on:
+  push:
+    paths:
+      - 'game/**'
+      - '.github/workflows/build-game.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: '4.3'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download Godot + export templates
+        run: |
+          set -e
+          V=$GODOT_VERSION
+          wget -q "https://github.com/godotengine/godot/releases/download/${V}-stable/Godot_v${V}-stable_linux.x86_64.zip"
+          wget -q "https://github.com/godotengine/godot/releases/download/${V}-stable/Godot_v${V}-stable_export_templates.tpz"
+          unzip -q "Godot_v${V}-stable_linux.x86_64.zip"
+          mv "Godot_v${V}-stable_linux.x86_64" godot
+          mkdir -p "$HOME/.local/share/godot/export_templates/${V}.stable"
+          unzip -q "Godot_v${V}-stable_export_templates.tpz"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${V}.stable/"
+
+      - name: Android SDK / keystore settings
+        run: |
+          set -e
+          keytool -genkeypair -v -keystore "$PWD/debug.keystore" -storepass android -alias androiddebugkey \
+            -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          mkdir -p "$HOME/.config/godot"
+          for f in editor_settings-4.tres editor_settings-${GODOT_VERSION}.tres; do
+          cat > "$HOME/.config/godot/$f" <<EOT
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_SDK_ROOT"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/debug_keystore = "$PWD/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOT
+          sed -i 's/^          //' "$HOME/.config/godot/$f"
+          done
+
+      - name: Import project
+        run: ./godot --headless --path game --import || ./godot --headless --path game --editor --quit
+
+      - name: Run game tests
+        run: |
+          ./godot --headless --path game -s res://tests/test_game.gd 2>&1 | grep -v 'mesh_get_surface_count\|Parameter "m" is null' | tee test.log
+          grep -q "job finished" test.log
+
+      - name: Export Windows
+        run: |
+          mkdir -p game/build
+          ./godot --headless --path game --export-release "Windows Desktop" build/CrmpSingle.exe
+          ./godot --headless --path game --export-release "Windows 32" build/CrmpSingle32.exe
+          ls -lh game/build
+
+      - name: Export Android
+        continue-on-error: true
+        run: |
+          ./godot --headless --path game --export-debug "Android" build/CrmpSingle.apk
+          ls -lh game/build
+
+      - name: Package
+        run: |
+          cd game/build
+          zip -9 CrmpSingle-Windows-64bit.zip CrmpSingle.exe
+          zip -9 CrmpSingle-Windows-32bit.zip CrmpSingle32.exe
+          ls -lh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CrmpSingle
+          path: |
+            game/build/*.zip
+            game/build/*.apk
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: game
+          name: CRMP Single — игра (последняя сборка)
+          body: |
+            Одиночная игра в стиле CRMP/SAMP. Сборка из коммита ${{ github.sha }}.
+
+            • CrmpSingle-Windows-64bit.zip — Windows 64 бит
+            • CrmpSingle-Windows-32bit.zip — Windows 32 бит (старые/слабые ПК)
+            • CrmpSingle.apk — Android
+
+            Управление: WASD, мышь — камера, Shift — бег, Space — прыжок/ручник, F — сесть/выйти из машины, T — чат, / — команда, Esc — пауза.
+          files: |
+            game/build/*.zip
+            game/build/*.apk
+          make_latest: false

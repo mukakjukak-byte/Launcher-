@@ -6,6 +6,8 @@ on:
       - 'cache/**'
       - 'pc/**'
       - 'cache-pc/**'
+      - 'game/**'
+      - '.github/workflows/build-game.yml'
       - '.github/workflows/build-pc.yml'
       - '.github/workflows/publish-cache.yml'
       - '**.md'
